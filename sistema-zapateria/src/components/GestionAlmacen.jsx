@@ -24,7 +24,8 @@ export default function GestionAlmacen() {
   }, [filtro])
 
   const fetchYAgrupar = async () => {
-    let query = supabase
+    // 1. Traemos TODOS los registros para poder validar duplicados entre estados
+    const { data: allData, error: allError } = await supabase
       .from('solicitudes')
       .select(`
         *,
@@ -33,28 +34,39 @@ export default function GestionAlmacen() {
           productos:producto_id (nombre, codigo_ref, imagen_url)
         )
       `)
+      .order('created_at', { ascending: false })
 
-    if (filtro === 'pendiente') {
-      query = query.in('status', ['pendiente', 'regresar al inventario'])
-    } else {
-      query = query.eq('status', filtro)
-    }
-
-    const { data, error } = await query.order('created_at', { ascending: false })
-
-    if (error) {
-      console.error("Error fetching:", error)
+    if (allError) {
+      console.error("Error fetching:", allError)
       return
     }
 
-    const agrupados = data.reduce((acc, curr) => {
+    // 2. Filtramos los datos para la vista actual
+    const dataFiltrada = allData.filter(item => {
+      if (filtro === 'pendiente') {
+        return ['pendiente', 'regresar al inventario'].includes(item.status)
+      }
+      return item.status === filtro
+    })
+
+    // 3. Agrupamos y aplicamos la lógica de validación cruzada
+    const agrupados = dataFiltrada.reduce((acc, curr) => {
       const key = `${curr.cliente_nombre}-${curr.kommo_id}`
+      
       if (!acc[key]) {
+        // Validamos si este cliente ya tiene algo en 'listo' o 'entregado'
+        const existeEnOtrosTabs = allData.some(item => 
+          item.cliente_nombre === curr.cliente_nombre && 
+          item.kommo_id === curr.kommo_id && 
+          ['listo', 'entregado'].includes(item.status)
+        )
+
         acc[key] = {
           id_grupo: key,
           cliente: curr.cliente_nombre,
           kommo_id: curr.kommo_id,
           telefono: curr.cliente_telefono,
+          tieneDuplicadoTabs: existeEnOtrosTabs, // Marcador de validación
           items: []
         }
       }
@@ -196,7 +208,6 @@ export default function GestionAlmacen() {
 
       {/* PANEL IZQUIERDO: FIJO */}
       <div className="w-full md:w-[40%] lg:w-[35%] xl:w-[30%] border-r border-slate-200 bg-white flex flex-col shadow-2xl z-20 overflow-hidden">
-        {/* Header fijo del panel izquierdo */}
         <div className="p-8 border-b border-slate-100 flex-shrink-0">
           <h1 className="text-2xl font-black text-slate-800 tracking-tighter mb-6 flex items-center gap-3 italic">
             <Package size={28} className="text-blue-600" /> CONTROL ALMACÉN
@@ -214,7 +225,6 @@ export default function GestionAlmacen() {
           </div>
         </div>
 
-        {/* Zona de scroll para los pedidos */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30 scrollbar-thin scrollbar-thumb-slate-200">
           {pedidosAgrupados.map(p => {
             const tieneRetorno = p.items.some(i => i.status === 'regresar al inventario');
@@ -225,11 +235,16 @@ export default function GestionAlmacen() {
                 onClick={() => setPedidoSeleccionado(p)}
                 className={`p-6 rounded-[2rem] cursor-pointer transition-all border-2 relative group ${isActive ? 'border-blue-500 bg-white shadow-xl translate-x-2' : 'border-transparent bg-white hover:bg-slate-50 shadow-sm'}`}
               >
-                {(p.items.some(i => i.modificado_vendedor || i.tipo_solicitud === 'venta de apartado') || tieneRetorno) && (
-                  <div className={`absolute top-4 right-12 w-3 h-3 ${tieneRetorno ? 'bg-orange-500' : 'bg-blue-500'} rounded-full animate-pulse border-2 border-white shadow-sm`}></div>
-                )}
+                {/* Notificación Visual de Duplicado o Modificación */}
+
+                
                 <h3 className="font-black text-slate-800 text-sm uppercase pr-8 truncate tracking-tight">{p.cliente}</h3>
                 <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic tracking-wider">ID Kommo: {p.kommo_id || '---'}</p>
+                
+                {p.tieneDuplicadoTabs && filtro === 'pendiente' && (
+                  <p className="text-[9px] font-black text-yellow-600 uppercase mt-1 italic">⚠️ Existe pedido previo en otros estados</p>
+                )}
+
                 <div className="mt-4 flex items-center gap-2">
                    <div className="bg-blue-50 px-4 py-1 rounded-full text-[10px] font-black border border-blue-100 text-blue-600 uppercase italic">
                     {p.items.length} {p.items.length === 1 ? 'Calzado' : 'Calzados'}
@@ -246,7 +261,6 @@ export default function GestionAlmacen() {
       <div className="flex-1 overflow-y-auto bg-slate-50 scrollbar-thin scrollbar-thumb-slate-200">
         {pedidoSeleccionado ? (
           <div className="max-w-4xl mx-auto p-8 lg:p-16">
-            {/* Header del pedido: estático dentro del flujo de scroll */}
             <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
               <div>
                 <span className="bg-blue-600 text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.2em] mb-3 inline-block">Gestión Activa</span>
@@ -301,12 +315,24 @@ export default function GestionAlmacen() {
                       </div>
                     )}
 
-                    <div className="flex items-center gap-4 mb-6">
-                      <p className="bg-blue-600 text-white px-5 py-1.5 rounded-xl font-black text-sm italic shadow-lg shadow-blue-200">TALLA {item.inventario?.talla}</p>
-                      <div className="flex items-center gap-2 text-slate-500 text-[11px] font-black uppercase tracking-tight">
-                        <Truck size={16} className="text-blue-500" /> 
-                        {item.metodo_entrega || 'RETIRO EN TIENDA'}
+                    <div className="flex flex-col gap-3 mb-6">
+                      <div className="flex items-center gap-4">
+                        <p className="bg-blue-600 text-white px-5 py-1.5 rounded-xl font-black text-sm italic shadow-lg shadow-blue-200">TALLA {item.inventario?.talla}</p>
+                        <div className="flex items-center gap-2 text-slate-500 text-[11px] font-black uppercase tracking-tight">
+                          <Truck size={16} className="text-blue-500" /> 
+                          {item.metodo_entrega || 'RETIRO EN TIENDA'}
+                        </div>
                       </div>
+                      
+                      {/* DATOS DE ENVÍO / DIRECCIÓN COMPLETA */}
+                      {item.cliente_direccion && (
+                        <div className="flex items-start gap-2 bg-slate-100/50 p-3 rounded-xl border border-dashed border-slate-200">
+                          <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                          <p className="text-[10px] font-bold text-slate-500 uppercase leading-relaxed">
+                            {item.cliente_direccion}
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {(item.status === 'regresar al inventario') && (
@@ -391,7 +417,6 @@ export default function GestionAlmacen() {
             </div>
           </div>
         ) : (
-          /* Estado vacío */
           <div className="h-full flex flex-col items-center justify-center text-slate-200">
             <div className="bg-white p-16 rounded-[4rem] shadow-sm border border-slate-100 flex flex-col items-center">
               <ShoppingBag size={120} strokeWidth={0.5} className="opacity-20 mb-6 text-blue-600" />
