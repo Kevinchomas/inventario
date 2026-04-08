@@ -3,8 +3,12 @@ import { supabase } from '../supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import ZapatoCard from './ZapatoCard'
 import ModalGestionVenta from './ModalGestionVenta'
+import GestionPedidosVenta from './GestionPedidosVenta' // <--- IMPORTACIÓN NUEVA
 import Button from './ui/Button'
-import { ShoppingCart, X, Plus, Store, Truck, User, Phone, MapPin, Hash, MessageSquare } from 'lucide-react'
+import { 
+  ShoppingCart, X, Plus, Store, Truck, User, 
+  Phone, MapPin, Hash, MessageSquare, ListTodo, ChevronLeft 
+} from 'lucide-react'
 
 export default function InventarioGrid({ refreshKey }) {
   const { user } = useAuth()
@@ -13,6 +17,9 @@ export default function InventarioGrid({ refreshKey }) {
   const [filtroCat, setFiltroCat] = useState('todos')
   const [busqueda, setBusqueda] = useState('')
   const [cargando, setCargando] = useState(true)
+
+  // --- ESTADOS DE VISTA ---
+  const [mostrarSeguimiento, setMostrarSeguimiento] = useState(false) // <--- CONTROL DE PESTAÑA
 
   // --- ESTADOS DE PEDIDO ---
   const [pedidoIniciado, setPedidoIniciado] = useState(false)
@@ -46,8 +53,6 @@ export default function InventarioGrid({ refreshKey }) {
     setCargando(false)
   }
 
-  // CORRECCIÓN: Uso de prevCarrito para asegurar que múltiples llamadas 
-  // en el mismo ciclo (forEach del modal) no sobrescriban el estado.
   const agregarAlCarrito = (zapato, itemInventario, configPersonalizada) => {
     setCarrito(prevCarrito => [
       ...prevCarrito, 
@@ -65,7 +70,6 @@ export default function InventarioGrid({ refreshKey }) {
     if (carrito.length === 0) return
     setEnviando(true)
     try {
-      // 1. Preparar inserción masiva
       const nuevasSolicitudes = carrito.map(item => ({
         inventario_id: item.inventario_id,
         vendedor_nombre: user?.nombre || 'Vendedor Desconocido',
@@ -83,8 +87,6 @@ export default function InventarioGrid({ refreshKey }) {
       const { error } = await supabase.from('solicitudes').insert(nuevasSolicitudes)
       if (error) throw error
 
-      // 2. Actualización de Stock
-      // Optimizamos: Aunque sea un bucle, cada operación es independiente por ID de inventario
       for (const item of carrito) {
         const { data: inv } = await supabase
           .from('inventario')
@@ -125,6 +127,23 @@ export default function InventarioGrid({ refreshKey }) {
     (filtroCat === 'todos' || z.categoria_id == filtroCat)
   )
 
+  // --- RENDERIZADO CONDICIONAL DE VISTAS ---
+  if (mostrarSeguimiento) {
+    return (
+      <div className="animate-in slide-in-from-bottom-4 duration-500">
+        <div className="mb-4">
+          <button 
+            onClick={() => setMostrarSeguimiento(false)}
+            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-blue-600 transition-colors"
+          >
+            <ChevronLeft size={16} /> Volver al Inventario
+          </button>
+        </div>
+        <GestionPedidosVenta />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 pb-24 animate-in fade-in duration-500">
       
@@ -145,13 +164,24 @@ export default function InventarioGrid({ refreshKey }) {
         </div>
         
         {!pedidoIniciado ? (
-          <Button onClick={() => setMostrarModalInicio(true)} className="bg-slate-900 hover:bg-black text-white px-8 rounded-2xl gap-2 h-14">
-            <Plus size={20} /> <span className="uppercase text-xs font-black">Iniciar Nuevo Pedido</span>
-          </Button>
+          <div className="flex gap-3 w-full md:w-auto">
+            {/* BOTÓN DE SEGUIMIENTO (ACCESO A GESTIONPEDIDOSVENTA) */}
+            <Button 
+              onClick={() => setMostrarSeguimiento(true)} 
+              variant="secondary"
+              className="border-slate-200 text-slate-600 px-6 rounded-2xl gap-2 h-14 bg-white hover:bg-slate-50"
+            >
+              <ListTodo size={20} /> <span className="uppercase text-xs font-black">Pedidos Activos</span>
+            </Button>
+
+            <Button onClick={() => setMostrarModalInicio(true)} className="bg-slate-900 hover:bg-black text-white px-8 rounded-2xl gap-2 h-14 flex-1 md:flex-none">
+              <Plus size={20} /> <span className="uppercase text-xs font-black">Iniciar Nuevo Pedido</span>
+            </Button>
+          </div>
         ) : (
           <div className="flex gap-2">
             <Button onClick={() => setMostrarCarrito(true)} variant="secondary" className="border-emerald-100 text-emerald-600 gap-2">
-               <ShoppingCart size={18} /> Carrito ({carrito.length})
+                <ShoppingCart size={18} /> Carrito ({carrito.length})
             </Button>
             <Button onClick={() => { if(confirm("¿Cancelar pedido?")) resetTodo() }} variant="secondary" className="text-red-500 border-red-50 px-4">
               <X size={18} />
@@ -191,7 +221,7 @@ export default function InventarioGrid({ refreshKey }) {
         ))}
       </div>
 
-      {/* MODAL GESTIÓN INDIVIDUAL */}
+      {/* ... (Resto de los modales se mantienen iguales) */}
       {zapatoSeleccionado && (
         <ModalGestionVenta 
           zapato={zapatoSeleccionado}

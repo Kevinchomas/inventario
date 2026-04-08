@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { 
   Truck, CheckCircle, XCircle, MapPin, User, 
-  Smartphone, Hash, ShoppingBag, Clock, Package, ChevronRight, AlertCircle 
+  Smartphone, Hash, ShoppingBag, Clock, Package, ChevronRight, AlertCircle, RefreshCcw
 } from 'lucide-react'
 
 export default function GestionAlmacen() {
@@ -23,7 +23,7 @@ export default function GestionAlmacen() {
   }, [filtro])
 
   const fetchYAgrupar = async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('solicitudes')
       .select(`
         *,
@@ -32,10 +32,20 @@ export default function GestionAlmacen() {
           productos:producto_id (nombre, codigo_ref, imagen_url)
         )
       `)
-      .eq('status', filtro)
-      .order('created_at', { ascending: false })
 
-    if (error) return
+    // Lógica para incluir "regresar al inventario" dentro de pendientes
+    if (filtro === 'pendiente') {
+      query = query.in('status', ['pendiente', 'regresar al inventario'])
+    } else {
+      query = query.eq('status', filtro)
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false })
+
+    if (error) {
+      console.error("Error fetching:", error)
+      return
+    }
 
     const agrupados = data.reduce((acc, curr) => {
       const key = `${curr.cliente_nombre}-${curr.kommo_id}`
@@ -52,10 +62,14 @@ export default function GestionAlmacen() {
       return acc
     }, {})
 
-    const resultado = Object.values(agrupados)
+    const resultado = Object.values(agrupados).sort((a, b) => {
+      const aMod = a.items.some(i => i.modificado_vendedor || i.status === 'regresar al inventario') ? 1 : 0
+      const bMod = b.items.some(i => i.modificado_vendedor || i.status === 'regresar al inventario') ? 1 : 0
+      return bMod - aMod
+    })
+
     setPedidosAgrupados(resultado)
     
-    // Mantener la selección activa sincronizada
     if (pedidoSeleccionado) {
       const actualizado = resultado.find(p => p.id_grupo === pedidoSeleccionado.id_grupo)
       setPedidoSeleccionado(actualizado || null)
@@ -85,25 +99,22 @@ export default function GestionAlmacen() {
     try {
       await devolverStock(item)
       await supabase.from('solicitudes').update({ status: 'cancelado' }).eq('id', item.id)
-      
-      // Actualización visual inmediata
-      if (pedidoSeleccionado) {
-        const nuevosItems = pedidoSeleccionado.items.filter(i => i.id !== item.id)
-        if (nuevosItems.length === 0) {
-          setPedidoSeleccionado(null)
-        } else {
-          setPedidoSeleccionado({ ...pedidoSeleccionado, items: nuevosItems })
-        }
-      }
       fetchYAgrupar()
     } catch (e) {
-      console.error("Error al cancelar item individual:", e)
+      console.error("Error al cancelar item:", e)
     }
   }
 
   const cancelarTodoElPedido = async (items) => {
-    if (!confirm("¿ESTÁS SEGURO? Se cancelarán todos los zapatos de este cliente.")) return
+    const esRetorno = items.some(i => i.status === 'regresar al inventario');
+    const mensaje = esRetorno 
+      ? "¿Confirmas que todos los zapatos han sido devueltos al estante físico?" 
+      : "¿ESTÁS SEGURO? Se cancelarán todos los zapatos de este cliente.";
+
+    if (!confirm(mensaje)) return
+
     for (const item of items) {
+      // Solo devolvemos stock si no se había devuelto antes (evitar duplicados si el flujo cambia)
       await devolverStock(item)
       await supabase.from('solicitudes').update({ status: 'cancelado' }).eq('id', item.id)
     }
@@ -111,32 +122,42 @@ export default function GestionAlmacen() {
     fetchYAgrupar()
   }
 
-  const toggleCheck = (id) => {
+  const toggleCheck = async (id, modificado) => {
+    if (modificado) {
+      await supabase.from('solicitudes').update({ modificado_vendedor: false }).eq('id', id)
+    }
     setItemsCheckeados(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
   const procesarAListo = async (items) => {
-    const ids = items.map(i => i.id)
-    const { error } = await supabase.from('solicitudes').update({ status: 'listo' }).in('id', ids)
-    if (!error) {
-      setPedidoSeleccionado(null)
-      setItemsCheckeados({})
-      fetchYAgrupar()
+    try {
+      const promesas = items.map(item => {
+        const updateData = { status: 'listo' };
+        if (item.tipo_solicitud === 'venta de apartado') {
+          updateData.tipo_solicitud = 'despacho';
+        }
+        return supabase.from('solicitudes').update(updateData).eq('id', item.id);
+      });
+      await Promise.all(promesas);
+      setPedidoSeleccionado(null);
+      setItemsCheckeados({});
+      fetchYAgrupar();
+    } catch (error) {
+      console.error("Error al procesar a listo:", error);
     }
   }
 
-  // LÓGICA DE SALIDA INTELIGENTE: Solo pasa a entregado lo que NO sea apartado
   const procesarSalidaInteligente = async (items) => {
     const itemsParaDespacho = items.filter(i => i.tipo_solicitud === 'despacho');
     const itemsApartados = items.filter(i => i.tipo_solicitud === 'apartado');
 
     if (itemsParaDespacho.length === 0) {
-      alert("Este pedido solo contiene APARTADOS. El almacenista los mantiene físicamente pero no se marcan como 'entregado' hasta que el vendedor los convierta en despacho.");
+      alert("Este pedido solo contiene APARTADOS. No se pueden marcar como entregados.");
       return;
     }
 
     if (itemsApartados.length > 0) {
-      if (!confirm(`Se marcarán ${itemsParaDespacho.length} como entregados. Los ${itemsApartados.length} apartados seguirán en esta lista para control. ¿Deseas continuar?`)) return;
+      if (!confirm(`Se enviarán ${itemsParaDespacho.length} pares. Los apartados seguirán en lista.`)) return;
     }
 
     const ids = itemsParaDespacho.map(i => i.id);
@@ -144,12 +165,13 @@ export default function GestionAlmacen() {
     
     if (!error) {
       setPedidoSeleccionado(null);
-      setItemsCheckeados({});
+      setItemsCheckeados({})
       fetchYAgrupar();
     }
   }
 
   const todosCheckeados = pedidoSeleccionado?.items.every(item => itemsCheckeados[item.id])
+  const esPedidoDeRetorno = pedidoSeleccionado?.items.some(i => i.status === 'regresar al inventario')
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-sans">
@@ -173,24 +195,26 @@ export default function GestionAlmacen() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {pedidosAgrupados.map(p => (
-            <div 
-              key={p.id_grupo}
-              onClick={() => setPedidoSeleccionado(p)}
-              className={`p-4 rounded-3xl cursor-pointer transition-all border-2 relative ${pedidoSeleccionado?.id_grupo === p.id_grupo ? 'border-blue-500 bg-blue-50' : 'border-transparent bg-slate-50 hover:bg-slate-100'}`}
-            >
-              {/* Notificación visual en lista si algún item fue modificado por vendedor */}
-              {p.items.some(i => i.modificado_vendedor) && (
-                <div className="absolute top-2 right-10 w-2.5 h-2.5 bg-orange-500 rounded-full animate-pulse border-2 border-white"></div>
-              )}
-              <h3 className="font-black text-slate-800 text-xs uppercase pr-6 truncate">{p.cliente}</h3>
-              <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic">ID Kommo: {p.kommo_id || '---'}</p>
-              <div className="mt-2 inline-block bg-white px-3 py-0.5 rounded-full text-[9px] font-black border border-slate-200 text-blue-600">
-                {p.items.length} {p.items.length === 1 ? 'PAR' : 'PARES'}
+          {pedidosAgrupados.map(p => {
+            const tieneRetorno = p.items.some(i => i.status === 'regresar al inventario');
+            return (
+              <div 
+                key={p.id_grupo}
+                onClick={() => setPedidoSeleccionado(p)}
+                className={`p-4 rounded-3xl cursor-pointer transition-all border-2 relative ${pedidoSeleccionado?.id_grupo === p.id_grupo ? 'border-blue-500 bg-blue-50' : 'border-transparent bg-slate-50 hover:bg-slate-100'}`}
+              >
+                {(p.items.some(i => i.modificado_vendedor || i.tipo_solicitud === 'venta de apartado') || tieneRetorno) && (
+                  <div className={`absolute top-2 right-10 w-2.5 h-2.5 ${tieneRetorno ? 'bg-orange-500' : 'bg-blue-500'} rounded-full animate-pulse border-2 border-white`}></div>
+                )}
+                <h3 className="font-black text-slate-800 text-xs uppercase pr-6 truncate">{p.cliente}</h3>
+                <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic">ID Kommo: {p.kommo_id || '---'}</p>
+                <div className="mt-2 inline-block bg-white px-3 py-0.5 rounded-full text-[9px] font-black border border-slate-200 text-blue-600">
+                  {p.items.length} {p.items.length === 1 ? 'PAR' : 'PARES'}
+                </div>
+                <ChevronRight className={`absolute right-4 top-1/2 -translate-y-1/2 transition-colors ${pedidoSeleccionado?.id_grupo === p.id_grupo ? 'text-blue-500' : 'text-slate-300'}`} size={18} />
               </div>
-              <ChevronRight className={`absolute right-4 top-1/2 -translate-y-1/2 transition-colors ${pedidoSeleccionado?.id_grupo === p.id_grupo ? 'text-blue-500' : 'text-slate-300'}`} size={18} />
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -213,25 +237,43 @@ export default function GestionAlmacen() {
 
             <div className="space-y-6">
               {pedidoSeleccionado.items.map(item => (
-                <div key={item.id} className={`bg-white rounded-[2.5rem] p-6 shadow-md border-2 flex gap-8 items-center transition-all ${item.modificado_vendedor ? 'border-orange-400 bg-orange-50/30' : 'border-slate-100'}`}>
+                <div key={item.id} className={`bg-white rounded-[2.5rem] p-6 shadow-md border-2 flex gap-8 items-center transition-all ${item.status === 'regresar al inventario' ? 'border-orange-400 bg-orange-50/30' : (item.tipo_solicitud === 'venta de apartado' || item.modificado_vendedor ? 'border-blue-400 bg-blue-50/30' : 'border-slate-100')}`}>
                   <div className="w-40 h-40 bg-slate-50 rounded-[2rem] overflow-hidden flex-shrink-0 border border-slate-100">
                     <img src={item.inventario?.productos?.imagen_url} className="w-full h-full object-cover" />
                   </div>
                   
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-3 py-0.5 rounded-lg text-[9px] font-black uppercase ${item.tipo_solicitud === 'apartado' ? 'bg-orange-100 text-orange-600' : 'bg-purple-100 text-purple-600'}`}>
-                        {item.tipo_solicitud}
+                      <span className={`px-3 py-0.5 rounded-lg text-[9px] font-black uppercase ${
+                        item.status === 'regresar al inventario'
+                        ? 'bg-orange-500 text-white'
+                        : item.tipo_solicitud === 'venta de apartado' 
+                          ? 'bg-blue-600 text-white' 
+                          : item.tipo_solicitud === 'apartado' 
+                            ? 'bg-orange-100 text-orange-600' 
+                            : 'bg-purple-100 text-purple-600'
+                      }`}>
+                        {item.status === 'regresar al inventario' ? 'POR REGRESAR' : item.tipo_solicitud}
                       </span>
-                      {item.modificado_vendedor && (
+                      {item.status === 'regresar al inventario' && (
                         <span className="flex items-center gap-1 bg-orange-600 text-white px-2 py-0.5 rounded-lg text-[8px] font-black animate-pulse">
-                          <AlertCircle size={10} /> CAMBIO DE STATUS
+                          <RefreshCcw size={10} /> DEVOLUCIÓN FÍSICA REQUERIDA
                         </span>
                       )}
-                      <span className="text-[10px] font-bold text-slate-300">REF: {item.inventario?.productos?.codigo_ref}</span>
+                      {(item.modificado_vendedor || item.tipo_solicitud === 'venta de apartado') && item.status !== 'regresar al inventario' && (
+                        <span className="flex items-center gap-1 bg-blue-600 text-white px-2 py-0.5 rounded-lg text-[8px] font-black animate-pulse">
+                          <AlertCircle size={10} /> REUBICACIÓN: SACAR DE APARTADOS
+                        </span>
+                      )}
+                      <span className="text-[10px] font-bold text-slate-300 ml-auto">REF: {item.inventario?.productos?.codigo_ref}</span>
                     </div>
                     
                     <h3 className="text-lg font-black text-slate-800 uppercase truncate mb-1">{item.inventario?.productos?.nombre}</h3>
+                    {item.nota_almacen && (
+                      <p className="text-[10px] bg-slate-100 p-2 rounded-lg text-slate-600 font-bold mb-2 italic">
+                        "{item.nota_almacen}"
+                      </p>
+                    )}
                     <p className="text-blue-600 font-black text-sm mb-3 italic">TALLA {item.inventario?.talla}</p>
                     
                     <div className="space-y-1 border-t border-slate-50 pt-3">
@@ -239,27 +281,24 @@ export default function GestionAlmacen() {
                         <Truck size={14} className="text-blue-500" /> 
                         {item.metodo_entrega || 'RETIRO EN TIENDA'}
                       </div>
-                      <div className="flex items-start gap-2 text-slate-400 text-[10px] font-medium leading-tight">
-                        <MapPin size={14} className="mt-0.5 flex-shrink-0 text-slate-300" /> 
-                        <span className="italic">{item.cliente_direccion || item.direccion_envio || 'Sin dirección registrada'}</span>
-                      </div>
                     </div>
                   </div>
 
                   {filtro !== 'entregado' && (
                     <div className="flex flex-col gap-3">
-                      <button 
-                        onClick={() => cancelarItem(item)}
-                        className="w-14 h-14 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border border-red-100 shadow-sm"
-                        title="Eliminar este calzado"
-                      >
-                        <XCircle size={24} strokeWidth={2.5} />
-                      </button>
+                      {item.status !== 'regresar al inventario' && (
+                        <button 
+                          onClick={() => cancelarItem(item)}
+                          className="w-14 h-14 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border border-red-100 shadow-sm"
+                        >
+                          <XCircle size={24} strokeWidth={2.5} />
+                        </button>
+                      )}
                       
                       {filtro === 'pendiente' && (
                         <button 
-                          onClick={() => toggleCheck(item.id)}
-                          className={`w-14 h-14 rounded-2xl flex items-center justify-center border-2 transition-all ${itemsCheckeados[item.id] ? 'bg-emerald-500 border-emerald-200 text-white shadow-lg' : 'bg-slate-50 border-slate-200 text-slate-300'}`}
+                          onClick={() => toggleCheck(item.id, item.modificado_vendedor)}
+                          className={`w-14 h-14 rounded-2xl flex items-center justify-center border-2 transition-all ${itemsCheckeados[item.id] ? (item.status === 'regresar al inventario' ? 'bg-orange-500 border-orange-200 text-white shadow-lg' : 'bg-emerald-500 border-emerald-200 text-white shadow-lg') : 'bg-slate-50 border-slate-200 text-slate-300'}`}
                         >
                           <CheckCircle size={24} strokeWidth={3} />
                         </button>
@@ -273,37 +312,42 @@ export default function GestionAlmacen() {
             <div className="mt-10 space-y-3">
               {filtro === 'pendiente' && (
                 <>
-                  <button 
-                    disabled={!todosCheckeados}
-                    onClick={() => procesarAListo(pedidoSeleccionado.items)}
-                    className={`w-full py-6 rounded-3xl font-black text-sm uppercase tracking-widest shadow-xl transition-all ${todosCheckeados ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-                  >
-                    {todosCheckeados ? 'MARCAR TODO COMO LISTO' : 'VERIFICA TODOS LOS CALZADOS PARA CONTINUAR'}
-                  </button>
-                  <button 
-                    onClick={() => cancelarTodoElPedido(pedidoSeleccionado.items)}
-                    className="w-full py-4 bg-transparent border-2 border-red-100 text-red-400 rounded-3xl font-black text-[10px] uppercase tracking-widest hover:bg-red-50 transition-all"
-                  >
-                    CANCELAR PEDIDO COMPLETO Y REGRESAR STOCK
-                  </button>
+                  {!esPedidoDeRetorno ? (
+                    <button 
+                      disabled={!todosCheckeados}
+                      onClick={() => procesarAListo(pedidoSeleccionado.items)}
+                      className={`w-full py-6 rounded-3xl font-black text-sm uppercase tracking-widest shadow-xl transition-all ${todosCheckeados ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                    >
+                      {todosCheckeados ? 'MARCAR TODO COMO LISTO' : 'VERIFICA TODOS LOS CALZADOS'}
+                    </button>
+                  ) : (
+                    <button 
+                      disabled={!todosCheckeados}
+                      onClick={() => cancelarTodoElPedido(pedidoSeleccionado.items)}
+                      className={`w-full py-6 rounded-3xl font-black text-sm uppercase tracking-widest shadow-xl transition-all ${todosCheckeados ? 'bg-orange-600 text-white hover:bg-orange-700' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                    >
+                      {todosCheckeados ? 'REGRESADO AL ALMACÉN' : 'VERIFICA LOS ZAPATOS A REGRESAR'}
+                    </button>
+                  )}
+                  
+                  {!esPedidoDeRetorno && (
+                    <button 
+                      onClick={() => cancelarTodoElPedido(pedidoSeleccionado.items)}
+                      className="w-full py-4 bg-transparent border-2 border-red-100 text-red-400 rounded-3xl font-black text-[10px] uppercase tracking-widest hover:bg-red-50"
+                    >
+                      CANCELAR PEDIDO COMPLETO
+                    </button>
+                  )}
                 </>
               )}
 
               {filtro === 'listo' && (
-                <>
-                  <button 
-                    onClick={() => procesarSalidaInteligente(pedidoSeleccionado.items)}
-                    className="w-full py-6 bg-emerald-600 text-white rounded-3xl font-black text-sm uppercase tracking-widest shadow-xl hover:bg-emerald-700 transition-all flex items-center justify-center gap-3"
-                  >
-                    <Truck size={20} /> CONFIRMAR SALIDA (SÓLO MODELOS DE ENVÍO)
-                  </button>
-                  <button 
-                    onClick={() => cancelarTodoElPedido(pedidoSeleccionado.items)}
-                    className="w-full py-4 bg-transparent border-2 border-red-100 text-red-400 rounded-3xl font-black text-[10px] uppercase tracking-widest hover:bg-red-50 transition-all"
-                  >
-                    CANCELAR Y DEVOLVER A INVENTARIO
-                  </button>
-                </>
+                <button 
+                  onClick={() => procesarSalidaInteligente(pedidoSeleccionado.items)}
+                  className="w-full py-6 bg-emerald-600 text-white rounded-3xl font-black text-sm uppercase tracking-widest shadow-xl hover:bg-emerald-700 transition-all flex items-center justify-center gap-3"
+                >
+                  <Truck size={20} /> CONFIRMAR SALIDA (SÓLO ENVÍOS)
+                </button>
               )}
             </div>
           </div>
