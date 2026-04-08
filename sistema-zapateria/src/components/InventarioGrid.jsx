@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import ZapatoCard from './ZapatoCard'
-import ModalGestionVenta from './ModalGestionVenta' // Importación del nuevo modal
+import ModalGestionVenta from './ModalGestionVenta'
 import Button from './ui/Button'
 import { ShoppingCart, X, Plus, Store, Truck, User, Phone, MapPin, Hash, MessageSquare } from 'lucide-react'
 
@@ -17,7 +17,7 @@ export default function InventarioGrid({ refreshKey }) {
   // --- ESTADOS DE PEDIDO ---
   const [pedidoIniciado, setPedidoIniciado] = useState(false)
   const [mostrarModalInicio, setMostrarModalInicio] = useState(false)
-  const [zapatoSeleccionado, setZapatoSeleccionado] = useState(null) // Controla el ModalGestionVenta
+  const [zapatoSeleccionado, setZapatoSeleccionado] = useState(null)
   const [carrito, setCarrito] = useState([])
   const [mostrarCarrito, setMostrarCarrito] = useState(false)
   const [enviando, setEnviando] = useState(false)
@@ -46,22 +46,26 @@ export default function InventarioGrid({ refreshKey }) {
     setCargando(false)
   }
 
-  // Función que recibe la configuración desde ModalGestionVenta
+  // CORRECCIÓN: Uso de prevCarrito para asegurar que múltiples llamadas 
+  // en el mismo ciclo (forEach del modal) no sobrescriban el estado.
   const agregarAlCarrito = (zapato, itemInventario, configPersonalizada) => {
-    setCarrito([...carrito, {
-      ...zapato,
-      inventario_id: itemInventario.id,
-      talla: itemInventario.talla,
-      ...configPersonalizada
-    }])
-    setZapatoSeleccionado(null) // Cierra el modal de gestión
+    setCarrito(prevCarrito => [
+      ...prevCarrito, 
+      {
+        ...zapato,
+        inventario_id: itemInventario.id,
+        talla: itemInventario.talla,
+        ...configPersonalizada
+      }
+    ])
+    setZapatoSeleccionado(null) 
   }
 
   const finalizarPedidoEnBD = async () => {
     if (carrito.length === 0) return
     setEnviando(true)
     try {
-      // Inserción múltiple en 'solicitudes' (Regla: mismo cliente_nombre y kommo_id)
+      // 1. Preparar inserción masiva
       const nuevasSolicitudes = carrito.map(item => ({
         inventario_id: item.inventario_id,
         vendedor_nombre: user?.nombre || 'Vendedor Desconocido',
@@ -79,21 +83,27 @@ export default function InventarioGrid({ refreshKey }) {
       const { error } = await supabase.from('solicitudes').insert(nuevasSolicitudes)
       if (error) throw error
 
-      // Actualización de Stock (Manual por cada item del carrito)
+      // 2. Actualización de Stock
+      // Optimizamos: Aunque sea un bucle, cada operación es independiente por ID de inventario
       for (const item of carrito) {
-        const { data: inv } = await supabase.from('inventario').select('cantidad_disponible').eq('id', item.inventario_id).single()
+        const { data: inv } = await supabase
+          .from('inventario')
+          .select('cantidad_disponible')
+          .eq('id', item.inventario_id)
+          .single()
+
         if (inv) {
           await supabase.from('inventario').update({ 
-            cantidad_disponible: inv.cantidad_disponible - 1 
+            cantidad_disponible: Math.max(0, inv.cantidad_disponible - 1) 
           }).eq('id', item.inventario_id)
         }
       }
 
-      alert("¡Pedido enviado exitosamente!");
+      alert(`¡Éxito! Se han procesado ${carrito.length} pares.`);
       resetTodo();
       fetchData();
     } catch (err) {
-      alert("Error: " + err.message)
+      alert("Error en el proceso: " + err.message)
     } finally {
       setEnviando(false)
     }
@@ -176,16 +186,17 @@ export default function InventarioGrid({ refreshKey }) {
             key={z.id} 
             zapato={z} 
             pedidoIniciado={pedidoIniciado} 
-            onAbrirGestion={(zapato) => setZapatoSeleccionado(zapato)}
+            onAbrirGestion={(z) => setZapatoSeleccionado(z)}
           />
         ))}
       </div>
 
-      {/* MODAL GESTIÓN INDIVIDUAL (DINÁMICO) */}
+      {/* MODAL GESTIÓN INDIVIDUAL */}
       {zapatoSeleccionado && (
         <ModalGestionVenta 
           zapato={zapatoSeleccionado}
           datosBaseCliente={cliente}
+          carritoActual={carrito}
           onClose={() => setZapatoSeleccionado(null)}
           onAgregar={agregarAlCarrito}
         />
@@ -230,27 +241,31 @@ export default function InventarioGrid({ refreshKey }) {
         </div>
       )}
 
-      {/* MODAL CARRITO (REVISIÓN) */}
+      {/* MODAL CARRITO */}
       {mostrarCarrito && (
         <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex justify-end">
           <div className="w-full max-w-md bg-white h-full flex flex-col animate-in slide-in-from-right duration-300 shadow-2xl">
             <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-              <h2 className="font-black text-xl uppercase italic">Tu Carrito</h2>
+              <h2 className="font-black text-xl uppercase italic">Tu Carrito ({carrito.length})</h2>
               <button onClick={() => setMostrarCarrito(false)}><X/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {carrito.map((item, idx) => (
-                <div key={idx} className="flex gap-4 p-4 bg-slate-50 rounded-[2rem] border relative">
-                  <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${item.tipo_solicitud === 'apartado' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
-                  <img src={item.imagen_url} className="w-16 h-16 rounded-2xl object-cover" />
-                  <div className="flex-1">
-                    <h4 className="text-xs font-black uppercase truncate">{item.nombre}</h4>
-                    <p className="text-[10px] font-bold text-blue-600">Talla {item.talla} • {item.tipo_solicitud}</p>
-                    <p className="text-[8px] text-slate-400 truncate uppercase">{item.cliente_direccion}</p>
+              {carrito.length === 0 ? (
+                <p className="text-center py-10 text-slate-400 font-bold uppercase text-xs">El carrito está vacío</p>
+              ) : (
+                carrito.map((item, idx) => (
+                  <div key={idx} className="flex gap-4 p-4 bg-slate-50 rounded-[2rem] border relative">
+                    <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${item.tipo_solicitud === 'apartado' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
+                    <img src={item.imagen_url} className="w-16 h-16 rounded-2xl object-cover" />
+                    <div className="flex-1">
+                      <h4 className="text-xs font-black uppercase truncate">{item.nombre}</h4>
+                      <p className="text-[10px] font-bold text-blue-600">Talla {item.talla} • {item.tipo_solicitud}</p>
+                      <p className="text-[8px] text-slate-400 truncate uppercase">{item.cliente_direccion}</p>
+                    </div>
+                    <button onClick={() => setCarrito(carrito.filter((_, i) => i !== idx))} className="text-red-400"><X size={18}/></button>
                   </div>
-                  <button onClick={() => setCarrito(carrito.filter((_, i) => i !== idx))} className="text-red-400"><X size={18}/></button>
-                </div>
-              ))}
+                ))
+              )}
             </div>
             <div className="p-6 border-t">
               <Button disabled={enviando || carrito.length === 0} onClick={finalizarPedidoEnBD} className="w-full py-5 bg-emerald-600 text-white font-black uppercase text-xs">
