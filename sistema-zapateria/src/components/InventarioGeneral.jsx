@@ -81,7 +81,7 @@ export default function InventarioGeneral() {
     <div className="max-w-[1400px] mx-auto pb-20 space-y-10 animate-in fade-in duration-500">
       
       {/* BUSCADOR */}
-      <div className="sticky top-20 z-[40] bg-slate-50/80 backdrop-blur-md py-4">
+      <div className="sticky top-0 z-[40] bg-slate-50/80 backdrop-blur-md py-4">
         <div className="bg-white p-3 rounded-[2.5rem] shadow-xl border border-slate-100 flex flex-wrap gap-3 items-center">
           <div className="flex-1 min-w-[300px] relative">
             <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-blue-500" size={20} />

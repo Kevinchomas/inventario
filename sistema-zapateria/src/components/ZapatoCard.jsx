@@ -63,25 +63,35 @@ export default function ZapatoCard({ zapato, pedidoIniciado, onAbrirGestion }) {
           {zapato.nombre}
         </h3>
 
-        {/* VISTA PREVIA DE TALLAS DISPONIBLES */}
+        {/* VISTA PREVIA DE TALLAS Y STOCK DISPONIBLE */}
         <div className="mt-4 flex flex-wrap gap-1.5">
-          {zapato.inventario?.filter(i => i.cantidad_disponible > 0).slice(0, 5).map((item) => (
-            <span 
+          {zapato.inventario
+            ?.filter(i => i.cantidad_disponible > 0)
+            .sort((a, b) => a.talla - b.talla) // Ordenamos por talla para que sea legible
+            .slice(0, 6) // Mostramos hasta 6 para no saturar la card
+            .map((item) => (
+            <div 
               key={item.id} 
-              className="text-[8px] font-black px-2 py-0.5 bg-slate-50 rounded-md text-slate-500 border border-slate-100"
+              className="flex items-center bg-slate-50 rounded-lg border border-slate-100 overflow-hidden"
             >
-              T{item.talla}
-            </span>
+              <span className="text-[8px] font-black px-1.5 py-1 bg-white text-slate-700 border-r border-slate-100">
+                {item.talla}
+              </span>
+              <span className={`text-[8px] font-black px-1.5 py-1 ${item.cantidad_disponible <= 2 ? 'text-orange-500' : 'text-blue-500'}`}>
+                {item.cantidad_disponible}
+              </span>
+            </div>
           ))}
-          {zapato.inventario?.length > 5 && (
-            <span className="text-[8px] font-bold text-slate-400 self-center">...</span>
+          
+          {zapato.inventario?.filter(i => i.cantidad_disponible > 0).length > 6 && (
+            <span className="text-[8px] font-bold text-slate-400 self-center ml-1">...</span>
           )}
         </div>
 
-        {/* INDICADOR DE AGOTADO (Si no hay stock en ninguna talla) */}
-        {zapato.inventario?.every(i => i.cantidad_disponible <= 0) && (
-          <div className="mt-2 text-[9px] font-black text-red-500 uppercase italic bg-red-50 py-1 px-2 rounded-lg inline-block">
-            Agotado
+        {/* INDICADOR DE AGOTADO */}
+        {(!zapato.inventario || zapato.inventario.every(i => i.cantidad_disponible <= 0)) && (
+          <div className="mt-2 text-[9px] font-black text-red-500 uppercase italic bg-red-50 py-1 px-3 rounded-full inline-block border border-red-100">
+            Agotado en Almacén
           </div>
         )}
       </div>

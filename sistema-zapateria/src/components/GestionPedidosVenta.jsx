@@ -138,9 +138,7 @@ export default function GestionPedidosVenta({ onVolver }) {
       {/* PANEL IZQUIERDO */}
       <div className="w-[320px] border-r border-slate-50 flex flex-col bg-slate-50/20">
         <div className="p-6">
-          <button onClick={onVolver} className="flex items-center gap-2 text-[10px] font-black uppercase text-blue-600 mb-6 hover:text-blue-800 transition-colors bg-blue-50 px-4 py-2 rounded-xl w-fit">
-            <ChevronLeft size={14} /> Volver al inventario
-          </button>
+
           <h1 className="text-xs font-black text-slate-800 tracking-tighter flex items-center gap-2 italic uppercase">
             <RefreshCw size={16} className="text-blue-600" /> Pedidos en curso
           </h1>
