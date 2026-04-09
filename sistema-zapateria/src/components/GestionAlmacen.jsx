@@ -54,11 +54,11 @@ export default function GestionAlmacen() {
       const key = `${curr.cliente_nombre}-${curr.kommo_id}`
       
       if (!acc[key]) {
-        // Validamos si este cliente ya tiene algo en 'listo' o 'entregado'
+        // Validamos si este cliente ya tiene algo en 'listo' (FIX APLICADO AQUÍ)
         const existeEnOtrosTabs = allData.some(item => 
           item.cliente_nombre === curr.cliente_nombre && 
           item.kommo_id === curr.kommo_id && 
-          ['listo', 'entregado'].includes(item.status)
+          item.status === 'listo'
         )
 
         acc[key] = {
