@@ -4,7 +4,7 @@ import {
   Clock, Package, Truck, Smartphone, 
   CheckCircle2, RefreshCw,
   ShoppingBag, X, Store, Layers,
-  Hash, Tag, Search
+  Hash, Tag, Search, Car
 } from 'lucide-react'
 import Button from './ui/Button'
 
@@ -12,7 +12,7 @@ export default function GestionPedidosVenta({ onVolver }) {
   const [pedidos, setPedidos] = useState([])
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [filtro, setFiltro] = useState('') // Estado para el buscador
+  const [filtro, setFiltro] = useState('')
 
   const [mostrarModalFinalizar, setMostrarModalFinalizar] = useState(false)
   const [itemsAProcesar, setItemsAProcesar] = useState([])
@@ -71,21 +71,15 @@ export default function GestionPedidosVenta({ onVolver }) {
     setLoading(false)
   }
 
-  // Lógica de filtrado inteligente
   const pedidosFiltrados = pedidos.filter(p => {
     const busqueda = filtro.toLowerCase()
-    
-    // 1. Buscar por ID de Kommo
     const matchKommo = p.kommo_id?.toString().toLowerCase().includes(busqueda)
-    
-    // 2. Buscar dentro de los items (Nombres, teléfonos, calzados)
     const matchItems = p.items.some(item => 
       item.cliente_nombre?.toLowerCase().includes(busqueda) ||
       item.cliente_telefono?.toLowerCase().includes(busqueda) ||
       item.inventario?.productos?.nombre?.toLowerCase().includes(busqueda) ||
       item.inventario?.productos?.codigo_ref?.toLowerCase().includes(busqueda)
     )
-
     return matchKommo || matchItems
   })
 
@@ -112,6 +106,8 @@ export default function GestionPedidosVenta({ onVolver }) {
   const ejecutarFinalizacionVenta = async () => {
     if (!editForm.nombre || !editForm.telefono) return alert("Nombre y teléfono obligatorios")
     const ids = itemsAProcesar.map(i => i.id)
+    
+    // Lógica crucial para Almacén: Concatenamos el Courier a la dirección
     const fullDireccion = editForm.metodo === 'envio' 
       ? `${editForm.courier} - ${editForm.provincia}, ${editForm.ciudad}. ${editForm.direccion}`
       : 'Retiro en tienda'
@@ -165,7 +161,6 @@ export default function GestionPedidosVenta({ onVolver }) {
             <RefreshCw size={16} className="text-blue-600" /> Seguimiento Pedidos
           </h1>
           
-          {/* BUSCADOR INTELIGENTE */}
           <div className="relative group">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={14} />
             <input 
@@ -198,12 +193,6 @@ export default function GestionPedidosVenta({ onVolver }) {
               </div>
             </div>
           ))}
-          {pedidosFiltrados.length === 0 && (
-            <div className="text-center py-10 opacity-40">
-              <Package size={30} className="mx-auto mb-2" />
-              <p className="text-[10px] font-black uppercase italic">Sin resultados</p>
-            </div>
-          )}
         </div>
       </div>
 
@@ -324,17 +313,38 @@ export default function GestionPedidosVenta({ onVolver }) {
                   <input type="text" className="w-full p-5 rounded-2xl bg-slate-50 border-slate-100 border text-sm font-bold outline-none" value={editForm.kommo_id} onChange={e => setEditForm({...editForm, kommo_id: e.target.value})} />
                 </div>
               </div>
+              
               <div className="flex p-2 bg-slate-100 rounded-[1.5rem] gap-1">
                 <button onClick={() => setEditForm({...editForm, metodo: 'retiro'})} className={`flex-1 py-4 rounded-xl font-black text-[11px] uppercase transition-all flex items-center justify-center gap-2 ${editForm.metodo === 'retiro' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-400'}`}><Store size={16}/> Retiro</button>
                 <button onClick={() => setEditForm({...editForm, metodo: 'envio'})} className={`flex-1 py-4 rounded-xl font-black text-[11px] uppercase transition-all flex items-center justify-center gap-2 ${editForm.metodo === 'envio' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-400'}`}><Truck size={16}/> Envío</button>
               </div>
+
               {editForm.metodo === 'envio' && (
                 <div className="p-6 bg-blue-50/30 rounded-[2rem] border border-blue-100/50 space-y-4">
-                   <div className="grid grid-cols-2 gap-3">
-                    <input type="text" placeholder="Provincia" className="p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold" value={editForm.provincia} onChange={e => setEditForm({...editForm, provincia: e.target.value})} />
-                    <input type="text" placeholder="Ciudad" className="p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold" value={editForm.ciudad} onChange={e => setEditForm({...editForm, ciudad: e.target.value})} />
+                  {/* SELECTOR DE COURIER REINTEGRADO */}
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black uppercase text-blue-400 ml-2 italic">Transportadora Seleccionada</label>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => setEditForm({...editForm, courier: 'Servientrega'})}
+                        className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${editForm.courier === 'Servientrega' ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400'}`}
+                      >
+                        Servientrega
+                      </button>
+                      <button 
+                        onClick={() => setEditForm({...editForm, courier: 'LarCourier'})}
+                        className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase border-2 transition-all ${editForm.courier === 'LarCourier' ? 'bg-blue-600 border-blue-600 text-white shadow-lg' : 'bg-white border-slate-100 text-slate-400'}`}
+                      >
+                        LarCourier
+                      </button>
+                    </div>
                   </div>
-                  <textarea placeholder="Dirección exacta..." className="w-full p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold h-24 outline-none resize-none" value={editForm.direccion} onChange={e => setEditForm({...editForm, direccion: e.target.value})} />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <input type="text" placeholder="Provincia" className="p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold outline-none focus:border-blue-400" value={editForm.provincia} onChange={e => setEditForm({...editForm, provincia: e.target.value})} />
+                    <input type="text" placeholder="Ciudad" className="p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold outline-none focus:border-blue-400" value={editForm.ciudad} onChange={e => setEditForm({...editForm, ciudad: e.target.value})} />
+                  </div>
+                  <textarea placeholder="Dirección exacta..." className="w-full p-4 bg-white rounded-xl border-slate-100 border text-xs font-bold h-24 outline-none resize-none focus:border-blue-400" value={editForm.direccion} onChange={e => setEditForm({...editForm, direccion: e.target.value})} />
                 </div>
               )}
             </div>

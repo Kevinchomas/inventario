@@ -26,7 +26,6 @@ export default function GestionAlmacen() {
     return () => { supabase.removeChannel(channel) }
   }, [filtro, subFiltroEnvio, ordenAscendente])
 
-  // Función auxiliar para normalizar y extraer el transportista de la dirección
   const extraerMetodo = (direccion = '') => {
     const dir = direccion.toLowerCase().trim();
     if (dir.includes('retiro en tienda')) return 'retiro';
@@ -60,7 +59,6 @@ export default function GestionAlmacen() {
         if (subFiltroEnvio === 'todos') return true
         const metodoExtraido = extraerMetodo(item.cliente_direccion);
         
-        // Validación estricta para los sub-tabs
         if (subFiltroEnvio === 'retiro') return metodoExtraido === 'retiro';
         return metodoExtraido === subFiltroEnvio;
       }
@@ -71,7 +69,6 @@ export default function GestionAlmacen() {
       const metodoExtraido = extraerMetodo(curr.cliente_direccion);
       const direccionKey = (curr.cliente_direccion || 'sin-direccion').toLowerCase();
       
-      // Agrupamos por ID + Método + Dirección exacta para evitar mezclar despachos distintos del mismo cliente
       const key = filtro === 'por_enviar' 
         ? `${curr.kommo_id || 'sin-id'}-${metodoExtraido}-${direccionKey}`
         : (curr.kommo_id || 'sin-id');
@@ -139,13 +136,29 @@ export default function GestionAlmacen() {
     } catch (e) { console.error(e) }
   }
 
+  // Lógica corregida para manejar "venta de apartado" -> "despacho"
   const finalizarGestion = async (items, nuevoStatus) => {
-    const ids = items.map(i => i.id)
-    const { error } = await supabase.from('solicitudes').update({ status: nuevoStatus }).in('id', ids)
-    if (!error) {
+    try {
+      for (const item of items) {
+        const updates = { status: nuevoStatus };
+        
+        // Si el ítem es una venta de apartado y se está marcando como listo, 
+        // cambiamos el tipo a despacho para que sea visible en "Por Enviar"
+        if (item.tipo_solicitud === 'venta de apartado' && nuevoStatus === 'listo') {
+          updates.tipo_solicitud = 'despacho';
+        }
+
+        await supabase
+          .from('solicitudes')
+          .update(updates)
+          .eq('id', item.id);
+      }
+
       setPedidoSeleccionado(null)
       setItemsCheckeados({})
       fetchYAgrupar()
+    } catch (error) {
+      console.error("Error al finalizar gestión:", error);
     }
   }
 
@@ -336,7 +349,6 @@ export default function GestionAlmacen() {
                       const isRetorno = item.status === 'regresar al inventario';
                       const isVentaApartado = item.tipo_solicitud === 'venta de apartado' || item.modificado_vendedor;
                       const metodoItem = extraerMetodo(item.cliente_direccion);
-                      const mostrarDireccion = metodoItem !== 'retiro';
 
                       return (
                         <div key={item.id} className={`bg-white rounded-[3rem] p-8 shadow-sm border-2 flex flex-col sm:flex-row gap-10 items-center transition-all 
