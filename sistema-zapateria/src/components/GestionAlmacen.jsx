@@ -24,7 +24,6 @@ export default function GestionAlmacen() {
   }, [filtro])
 
   const fetchYAgrupar = async () => {
-    // 1. Traemos TODOS los registros para poder validar duplicados entre estados
     const { data: allData, error: allError } = await supabase
       .from('solicitudes')
       .select(`
@@ -41,7 +40,6 @@ export default function GestionAlmacen() {
       return
     }
 
-    // 2. Filtramos los datos para la vista actual
     const dataFiltrada = allData.filter(item => {
       if (filtro === 'pendiente') {
         return ['pendiente', 'regresar al inventario'].includes(item.status)
@@ -49,24 +47,21 @@ export default function GestionAlmacen() {
       return item.status === filtro
     })
 
-    // 3. Agrupamos y aplicamos la lógica de validación cruzada
+    // MODIFICACIÓN: Agrupación solo por kommo_id
     const agrupados = dataFiltrada.reduce((acc, curr) => {
-      const key = `${curr.cliente_nombre}-${curr.kommo_id}`
+      const key = curr.kommo_id || 'sin-id'
       
       if (!acc[key]) {
-        // Validamos si este cliente ya tiene algo en 'listo' (FIX APLICADO AQUÍ)
         const existeEnOtrosTabs = allData.some(item => 
-          item.cliente_nombre === curr.cliente_nombre && 
           item.kommo_id === curr.kommo_id && 
           item.status === 'listo'
         )
 
         acc[key] = {
           id_grupo: key,
-          cliente: curr.cliente_nombre,
           kommo_id: curr.kommo_id,
           telefono: curr.cliente_telefono,
-          tieneDuplicadoTabs: existeEnOtrosTabs, // Marcador de validación
+          tieneDuplicadoTabs: existeEnOtrosTabs,
           items: []
         }
       }
@@ -88,6 +83,7 @@ export default function GestionAlmacen() {
     }
   }
 
+  // Las funciones de lógica (devolverStock, cancelarItem, etc.) se mantienen intactas
   const devolverStock = async (item) => {
     const { data: inv } = await supabase
       .from('inventario')
@@ -184,10 +180,18 @@ export default function GestionAlmacen() {
   const todosCheckeados = pedidoSeleccionado?.items.every(item => itemsCheckeados[item.id])
   const esPedidoDeRetorno = pedidoSeleccionado?.items.some(i => i.status === 'regresar al inventario')
 
+  // Lógica para sub-agrupar items por nombre de cliente dentro del pedido seleccionado
+  const itemsSubAgrupados = pedidoSeleccionado?.items.reduce((acc, item) => {
+    const nombre = item.cliente_nombre || 'Sin Nombre';
+    if (!acc[nombre]) acc[nombre] = [];
+    acc[nombre].push(item);
+    return acc;
+  }, {}) || {};
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans ">
       
-      {/* MODAL DE IMAGEN (OVERLAY) */}
+      {/* MODAL DE IMAGEN */}
       {imagenExpandida && (
         <div 
           className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
@@ -206,7 +210,7 @@ export default function GestionAlmacen() {
         </div>
       )}
 
-      {/* PANEL IZQUIERDO: FIJO */}
+      {/* PANEL IZQUIERDO */}
       <div className="w-full md:w-[40%] lg:w-[35%] xl:w-[30%] border-r border-slate-200 bg-white flex flex-col shadow-2xl z-20 overflow-hidden">
         <div className="p-8 border-b border-slate-100 flex-shrink-0">
           <h1 className="text-2xl font-black text-slate-800 tracking-tighter mb-6 flex items-center gap-3 italic">
@@ -227,7 +231,6 @@ export default function GestionAlmacen() {
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30 scrollbar-thin scrollbar-thumb-slate-200">
           {pedidosAgrupados.map(p => {
-            const tieneRetorno = p.items.some(i => i.status === 'regresar al inventario');
             const isActive = pedidoSeleccionado?.id_grupo === p.id_grupo;
             return (
               <div 
@@ -235,17 +238,16 @@ export default function GestionAlmacen() {
                 onClick={() => setPedidoSeleccionado(p)}
                 className={`p-6 rounded-[2rem] cursor-pointer transition-all border-2 relative group ${isActive ? 'border-blue-500 bg-white shadow-xl translate-x-2' : 'border-transparent bg-white hover:bg-slate-50 shadow-sm'}`}
               >
-                {/* Notificación Visual de Duplicado o Modificación */}
-
-                
-                <h3 className="font-black text-slate-800 text-sm uppercase pr-8 truncate tracking-tight">{p.cliente}</h3>
-                <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase italic tracking-wider">ID Kommo: {p.kommo_id || '---'}</p>
+                {/* MODIFICACIÓN: ID Kommo como título principal */}
+                <h3 className="font-black text-slate-800 text-lg uppercase pr-8 truncate tracking-tight">
+                  Código: {p.kommo_id || 'S/N'}
+                </h3>
                 
                 {p.tieneDuplicadoTabs && filtro === 'pendiente' && (
                   <p className="text-[9px] font-black text-yellow-600 uppercase mt-1 italic">⚠️ Existe pedido previo en otros estados</p>
                 )}
 
-                <div className="mt-4 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2">
                    <div className="bg-blue-50 px-4 py-1 rounded-full text-[10px] font-black border border-blue-100 text-blue-600 uppercase italic">
                     {p.items.length} {p.items.length === 1 ? 'Calzado' : 'Calzados'}
                   </div>
@@ -257,123 +259,136 @@ export default function GestionAlmacen() {
         </div>
       </div>
 
-      {/* PANEL DERECHO: DETALLES */}
+      {/* PANEL DERECHO */}
       <div className="flex-1 overflow-y-auto bg-slate-50 scrollbar-thin scrollbar-thumb-slate-200">
         {pedidoSeleccionado ? (
           <div className="max-w-4xl mx-auto p-8 lg:p-16">
-            <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
-              <div>
-                <span className="bg-blue-600 text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.2em] mb-3 inline-block">Gestión Activa</span>
-                <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter leading-none">{pedidoSeleccionado.cliente}</h2>
-              </div>
-              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 min-w-[200px]">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest text-center md:text-right">Canal de Contacto</p>
-                <p className="font-black text-slate-800 flex items-center justify-center md:justify-end gap-2 text-base">
-                  <Smartphone size={18} className="text-blue-500" /> {pedidoSeleccionado.telefono}
-                </p>
-              </div>
-            </div>
-
-            {/* Listado de calzados */}
-            <div className="space-y-8">
-              {pedidoSeleccionado.items.map(item => (
-                <div key={item.id} className={`bg-white rounded-[3rem] p-8 shadow-sm border-2 flex flex-col sm:flex-row gap-10 items-center transition-all ${item.status === 'regresar al inventario' ? 'border-orange-400 bg-orange-50/20' : (item.tipo_solicitud === 'venta de apartado' || item.modificado_vendedor ? 'border-blue-400 bg-blue-50/20' : 'border-slate-50')}`}>
-                  
-                  <div 
-                    className="w-56 h-56 bg-slate-100 rounded-[2.5rem] overflow-hidden flex-shrink-0 border border-slate-200 shadow-inner cursor-zoom-in group"
-                    onClick={() => setImagenExpandida(item.inventario?.productos?.imagen_url)}
-                  >
-                    <img 
-                      src={item.inventario?.productos?.imagen_url} 
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
-                      alt="Producto"
-                    />
+            
+            {/* Iterar sobre los sub-grupos de nombres */}
+            {Object.entries(itemsSubAgrupados).map(([nombreCliente, items], idx) => (
+              <div key={nombreCliente} className={idx > 0 ? "mt-16" : ""}>
+                
+                {/* Cabecera de Sub-grupo */}
+                <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
+                  <div>
+                    <span className="bg-blue-600 text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.2em] mb-3 inline-block">
+                      Gestión Activa
+                    </span>
+                    <h2 className="text-3xl font-black text-slate-900 uppercase tracking-tighter leading-none">
+                      <span className="text-blue-600 text-lg block mb-1">Solicitó:</span>
+                      {nombreCliente}
+                    </h2>
                   </div>
-                  
-                  <div className="flex-1 min-w-0 w-full">
-                    <div className="flex flex-wrap items-center gap-2 mb-4">
-                      <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${
-                        item.status === 'regresar al inventario'
-                        ? 'bg-orange-500 text-white'
-                        : item.tipo_solicitud === 'venta de apartado' 
-                          ? 'bg-blue-600 text-white' 
-                          : item.tipo_solicitud === 'apartado' 
-                            ? 'bg-orange-100 text-orange-600 border border-orange-200' 
-                            : 'bg-purple-100 text-purple-600 border border-purple-200'
-                      }`}>
-                        {item.status === 'regresar al inventario' ? 'POR REGRESAR' : item.tipo_solicitud}
-                      </span>
-                      <span className="text-[11px] font-black text-slate-300 ml-auto bg-slate-50 px-3 py-1 rounded-md border border-slate-100">REF: {item.inventario?.productos?.codigo_ref}</span>
-                    </div>
-                    
-                    <h3 className="text-2xl font-black text-slate-800 uppercase truncate mb-1 italic tracking-tight">{item.inventario?.productos?.nombre}</h3>
-                    
-                    {item.nota_almacen && (
-                      <div className="flex items-start gap-2 bg-slate-50 p-4 rounded-2xl text-slate-600 font-bold mb-4 border-l-4 border-blue-500 shadow-sm italic text-xs">
-                        <AlertCircle size={14} className="mt-0.5 text-blue-500 flex-shrink-0" />
-                        <span>"{item.nota_almacen}"</span>
-                      </div>
-                    )}
-
-                    <div className="flex flex-col gap-3 mb-6">
-                      <div className="flex items-center gap-4">
-                        <p className="bg-blue-600 text-white px-5 py-1.5 rounded-xl font-black text-sm italic shadow-lg shadow-blue-200">TALLA {item.inventario?.talla}</p>
-                        <div className="flex items-center gap-2 text-slate-500 text-[11px] font-black uppercase tracking-tight">
-                          <Truck size={16} className="text-blue-500" /> 
-                          {item.metodo_entrega || 'RETIRO EN TIENDA'}
-                        </div>
-                      </div>
-                      
-                      {/* DATOS DE ENVÍO / DIRECCIÓN COMPLETA */}
-                      {item.cliente_direccion && (
-                        <div className="flex items-start gap-2 bg-slate-100/50 p-3 rounded-xl border border-dashed border-slate-200">
-                          <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
-                          <p className="text-[10px] font-bold text-slate-500 uppercase leading-relaxed">
-                            {item.cliente_direccion}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    {(item.status === 'regresar al inventario') && (
-                      <div className="flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-2xl text-[10px] font-black animate-pulse shadow-lg shadow-orange-200 w-fit">
-                        <RefreshCcw size={14} className="animate-spin-slow" /> DEVOLUCIÓN FÍSICA OBLIGATORIA
-                      </div>
-                    )}
-                    
-                    {(item.modificado_vendedor || item.tipo_solicitud === 'venta de apartado') && item.status !== 'regresar al inventario' && (
-                      <div className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-2xl text-[10px] font-black animate-pulse shadow-lg shadow-blue-200 w-fit">
-                        <AlertCircle size={14} /> REUBICACIÓN: SACAR DE APARTADOS
-                      </div>
-                    )}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 min-w-[200px]">
+                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest text-center md:text-right">Canal de Contacto</p>
+                    <p className="font-black text-slate-800 flex items-center justify-center md:justify-end gap-2 text-base">
+                      <Smartphone size={18} className="text-blue-500" /> {items[0].cliente_telefono}
+                    </p>
+                    <p className="text-[10px] font-bold text-blue-500 mt-1 text-center md:text-right italic">ID: {pedidoSeleccionado.kommo_id}</p>
                   </div>
-
-                  {filtro !== 'entregado' && (
-                    <div className="flex flex-row sm:flex-col gap-4 w-full sm:w-auto">
-                      {item.status !== 'regresar al inventario' && (
-                        <button 
-                          onClick={() => cancelarItem(item)}
-                          className="flex-1 sm:w-20 sm:h-20 bg-red-50 text-red-500 rounded-[1.5rem] flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border-2 border-red-100 shadow-sm group"
-                        >
-                          <XCircle size={32} strokeWidth={2.5} className="group-hover:scale-110 transition-transform" />
-                        </button>
-                      )}
-                      
-                      {filtro === 'pendiente' && (
-                        <button 
-                          onClick={() => toggleCheck(item.id, item.modificado_vendedor)}
-                          className={`flex-1 sm:w-20 sm:h-20 rounded-[1.5rem] flex items-center justify-center border-2 transition-all group ${itemsCheckeados[item.id] ? (item.status === 'regresar al inventario' ? 'bg-orange-500 border-orange-200 text-white shadow-xl scale-105' : 'bg-emerald-500 border-emerald-200 text-white shadow-xl scale-105') : 'bg-slate-50 border-slate-200 text-slate-300'}`}
-                        >
-                          <CheckCircle size={32} strokeWidth={3} className="group-hover:scale-110 transition-transform" />
-                        </button>
-                      )}
-                    </div>
-                  )}
                 </div>
-              ))}
-            </div>
 
-            {/* Botones de acción final */}
+                {/* Listado de calzados de este sub-grupo */}
+                <div className="space-y-8">
+                  {items.map(item => (
+                    <div key={item.id} className={`bg-white rounded-[3rem] p-8 shadow-sm border-2 flex flex-col sm:flex-row gap-10 items-center transition-all ${item.status === 'regresar al inventario' ? 'border-orange-400 bg-orange-50/20' : (item.tipo_solicitud === 'venta de apartado' || item.modificado_vendedor ? 'border-blue-400 bg-blue-50/20' : 'border-slate-50')}`}>
+                      
+                      <div 
+                        className="w-56 h-56 bg-slate-100 rounded-[2.5rem] overflow-hidden flex-shrink-0 border border-slate-200 shadow-inner cursor-zoom-in group"
+                        onClick={() => setImagenExpandida(item.inventario?.productos?.imagen_url)}
+                      >
+                        <img 
+                          src={item.inventario?.productos?.imagen_url} 
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                          alt="Producto"
+                        />
+                      </div>
+                      
+                      <div className="flex-1 min-w-0 w-full">
+                        <div className="flex flex-wrap items-center gap-2 mb-4">
+                          <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${
+                            item.status === 'regresar al inventario'
+                            ? 'bg-orange-500 text-white'
+                            : item.tipo_solicitud === 'venta de apartado' 
+                              ? 'bg-blue-600 text-white' 
+                              : item.tipo_solicitud === 'apartado' 
+                                ? 'bg-orange-100 text-orange-600 border border-orange-200' 
+                                : 'bg-purple-100 text-purple-600 border border-purple-200'
+                          }`}>
+                            {item.status === 'regresar al inventario' ? 'POR REGRESAR' : item.tipo_solicitud}
+                          </span>
+                          <span className="text-[11px] font-black text-slate-300 ml-auto bg-slate-50 px-3 py-1 rounded-md border border-slate-100">REF: {item.inventario?.productos?.codigo_ref}</span>
+                        </div>
+                        
+                        <h3 className="text-2xl font-black text-slate-800 uppercase truncate mb-1 italic tracking-tight">{item.inventario?.productos?.nombre}</h3>
+                        
+                        {item.nota_almacen && (
+                          <div className="flex items-start gap-2 bg-slate-50 p-4 rounded-2xl text-slate-600 font-bold mb-4 border-l-4 border-blue-500 shadow-sm italic text-xs">
+                            <AlertCircle size={14} className="mt-0.5 text-blue-500 flex-shrink-0" />
+                            <span>"{item.nota_almacen}"</span>
+                          </div>
+                        )}
+
+                        <div className="flex flex-col gap-3 mb-6">
+                          <div className="flex items-center gap-4">
+                            <p className="bg-blue-600 text-white px-5 py-1.5 rounded-xl font-black text-sm italic shadow-lg shadow-blue-200">TALLA {item.inventario?.talla}</p>
+                            <div className="flex items-center gap-2 text-slate-500 text-[11px] font-black uppercase tracking-tight">
+                              <Truck size={16} className="text-blue-500" /> 
+                              {item.metodo_entrega || 'RETIRO EN TIENDA'}
+                            </div>
+                          </div>
+                          
+                          {item.cliente_direccion && (
+                            <div className="flex items-start gap-2 bg-slate-100/50 p-3 rounded-xl border border-dashed border-slate-200">
+                              <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                              <p className="text-[10px] font-bold text-slate-500 uppercase leading-relaxed">
+                                {item.cliente_direccion}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {(item.status === 'regresar al inventario') && (
+                          <div className="flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-2xl text-[10px] font-black animate-pulse shadow-lg shadow-orange-200 w-fit">
+                            <RefreshCcw size={14} className="animate-spin-slow" /> DEVOLUCIÓN FÍSICA OBLIGATORIA
+                          </div>
+                        )}
+                        
+                        {(item.modificado_vendedor || item.tipo_solicitud === 'venta de apartado') && item.status !== 'regresar al inventario' && (
+                          <div className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-2xl text-[10px] font-black animate-pulse shadow-lg shadow-blue-200 w-fit">
+                            <AlertCircle size={14} /> REUBICACIÓN: SACAR DE APARTADOS
+                          </div>
+                        )}
+                      </div>
+
+                      {filtro !== 'entregado' && (
+                        <div className="flex flex-row sm:flex-col gap-4 w-full sm:w-auto">
+                          {item.status !== 'regresar al inventario' && (
+                            <button 
+                              onClick={() => cancelarItem(item)}
+                              className="flex-1 sm:w-20 sm:h-20 bg-red-50 text-red-500 rounded-[1.5rem] flex items-center justify-center hover:bg-red-500 hover:text-white transition-all border-2 border-red-100 shadow-sm group"
+                            >
+                              <XCircle size={32} strokeWidth={2.5} className="group-hover:scale-110 transition-transform" />
+                            </button>
+                          )}
+                          
+                          {filtro === 'pendiente' && (
+                            <button 
+                              onClick={() => toggleCheck(item.id, item.modificado_vendedor)}
+                              className={`flex-1 sm:w-20 sm:h-20 rounded-[1.5rem] flex items-center justify-center border-2 transition-all group ${itemsCheckeados[item.id] ? (item.status === 'regresar al inventario' ? 'bg-orange-500 border-orange-200 text-white shadow-xl scale-105' : 'bg-emerald-500 border-emerald-200 text-white shadow-xl scale-105') : 'bg-slate-50 border-slate-200 text-slate-300'}`}
+                            >
+                              <CheckCircle size={32} strokeWidth={3} className="group-hover:scale-110 transition-transform" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Botones de acción final (se mantienen abajo del todo) */}
             <div className="mt-14 space-y-4 pb-12">
               {filtro === 'pendiente' && (
                 <>
