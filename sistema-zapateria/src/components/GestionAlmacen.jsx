@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { 
   Truck, CheckCircle, XCircle, MapPin, User, 
-  Smartphone, Hash, ShoppingBag, Clock, Package, ChevronRight, AlertCircle, RefreshCcw, X
+  Smartphone, Hash, ShoppingBag, Clock, Package, ChevronRight, AlertCircle, RefreshCcw, X, Search
 } from 'lucide-react'
 
 export default function GestionAlmacen() {
@@ -11,6 +11,7 @@ export default function GestionAlmacen() {
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null)
   const [itemsCheckeados, setItemsCheckeados] = useState({})
   const [imagenExpandida, setImagenExpandida] = useState(null)
+  const [busqueda, setBusqueda] = useState('')
 
   useEffect(() => {
     fetchYAgrupar()
@@ -47,7 +48,6 @@ export default function GestionAlmacen() {
       return item.status === filtro
     })
 
-    // MODIFICACIÓN: Agrupación solo por kommo_id
     const agrupados = dataFiltrada.reduce((acc, curr) => {
       const key = curr.kommo_id || 'sin-id'
       
@@ -83,7 +83,6 @@ export default function GestionAlmacen() {
     }
   }
 
-  // Las funciones de lógica (devolverStock, cancelarItem, etc.) se mantienen intactas
   const devolverStock = async (item) => {
     const { data: inv } = await supabase
       .from('inventario')
@@ -177,10 +176,19 @@ export default function GestionAlmacen() {
     }
   }
 
+  // Filtrado por buscador
+  const pedidosFiltrados = pedidosAgrupados.filter(p => {
+    const query = busqueda.toLowerCase();
+    const matchKommo = p.kommo_id?.toString().toLowerCase().includes(query);
+    const matchNombre = p.items.some(item => 
+      item.cliente_nombre?.toLowerCase().includes(query)
+    );
+    return matchKommo || matchNombre;
+  });
+
   const todosCheckeados = pedidoSeleccionado?.items.every(item => itemsCheckeados[item.id])
   const esPedidoDeRetorno = pedidoSeleccionado?.items.some(i => i.status === 'regresar al inventario')
 
-  // Lógica para sub-agrupar items por nombre de cliente dentro del pedido seleccionado
   const itemsSubAgrupados = pedidoSeleccionado?.items.reduce((acc, item) => {
     const nombre = item.cliente_nombre || 'Sin Nombre';
     if (!acc[nombre]) acc[nombre] = [];
@@ -191,7 +199,6 @@ export default function GestionAlmacen() {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans ">
       
-      {/* MODAL DE IMAGEN */}
       {imagenExpandida && (
         <div 
           className="fixed inset-0 z-[100] bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
@@ -216,6 +223,27 @@ export default function GestionAlmacen() {
           <h1 className="text-2xl font-black text-slate-800 tracking-tighter mb-6 flex items-center gap-3 italic">
             <Package size={28} className="text-blue-600" /> CONTROL ALMACÉN
           </h1>
+          
+          {/* BUSCADOR ESTILO GESTION VENTAS */}
+          <div className="relative mb-6">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input 
+              type="text"
+              placeholder="Buscar por ID o Nombre..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              className="w-full bg-slate-100 border-none rounded-2xl py-4 pl-12 pr-12 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+            {busqueda && (
+              <button 
+                onClick={() => setBusqueda('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X size={18} />
+              </button>
+            )}
+          </div>
+
           <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
             {['pendiente', 'listo', 'entregado'].map(f => (
               <button 
@@ -230,7 +258,7 @@ export default function GestionAlmacen() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/30 scrollbar-thin scrollbar-thumb-slate-200">
-          {pedidosAgrupados.map(p => {
+          {pedidosFiltrados.map(p => {
             const isActive = pedidoSeleccionado?.id_grupo === p.id_grupo;
             return (
               <div 
@@ -238,7 +266,6 @@ export default function GestionAlmacen() {
                 onClick={() => setPedidoSeleccionado(p)}
                 className={`p-6 rounded-[2rem] cursor-pointer transition-all border-2 relative group ${isActive ? 'border-blue-500 bg-white shadow-xl translate-x-2' : 'border-transparent bg-white hover:bg-slate-50 shadow-sm'}`}
               >
-                {/* MODIFICACIÓN: ID Kommo como título principal */}
                 <h3 className="font-black text-slate-800 text-lg uppercase pr-8 truncate tracking-tight">
                   Código: {p.kommo_id || 'S/N'}
                 </h3>
@@ -256,6 +283,11 @@ export default function GestionAlmacen() {
               </div>
             )
           })}
+          {pedidosFiltrados.length === 0 && (
+            <div className="text-center py-10">
+              <p className="text-slate-400 font-bold text-sm italic">No se encontraron resultados</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -263,12 +295,8 @@ export default function GestionAlmacen() {
       <div className="flex-1 overflow-y-auto bg-slate-50 scrollbar-thin scrollbar-thumb-slate-200">
         {pedidoSeleccionado ? (
           <div className="max-w-4xl mx-auto p-8 lg:p-16">
-            
-            {/* Iterar sobre los sub-grupos de nombres */}
             {Object.entries(itemsSubAgrupados).map(([nombreCliente, items], idx) => (
               <div key={nombreCliente} className={idx > 0 ? "mt-16" : ""}>
-                
-                {/* Cabecera de Sub-grupo */}
                 <div className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
                   <div>
                     <span className="bg-blue-600 text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-[0.2em] mb-3 inline-block">
@@ -288,11 +316,9 @@ export default function GestionAlmacen() {
                   </div>
                 </div>
 
-                {/* Listado de calzados de este sub-grupo */}
                 <div className="space-y-8">
                   {items.map(item => (
                     <div key={item.id} className={`bg-white rounded-[3rem] p-8 shadow-sm border-2 flex flex-col sm:flex-row gap-10 items-center transition-all ${item.status === 'regresar al inventario' ? 'border-orange-400 bg-orange-50/20' : (item.tipo_solicitud === 'venta de apartado' || item.modificado_vendedor ? 'border-blue-400 bg-blue-50/20' : 'border-slate-50')}`}>
-                      
                       <div 
                         className="w-56 h-56 bg-slate-100 rounded-[2.5rem] overflow-hidden flex-shrink-0 border border-slate-200 shadow-inner cursor-zoom-in group"
                         onClick={() => setImagenExpandida(item.inventario?.productos?.imagen_url)}
@@ -388,7 +414,6 @@ export default function GestionAlmacen() {
               </div>
             ))}
 
-            {/* Botones de acción final (se mantienen abajo del todo) */}
             <div className="mt-14 space-y-4 pb-12">
               {filtro === 'pendiente' && (
                 <>

@@ -4,7 +4,7 @@ import {
   Clock, Package, Truck, Smartphone, 
   CheckCircle2, RefreshCw,
   ShoppingBag, X, Store, Layers,
-  Hash, Tag
+  Hash, Tag, Search
 } from 'lucide-react'
 import Button from './ui/Button'
 
@@ -12,6 +12,7 @@ export default function GestionPedidosVenta({ onVolver }) {
   const [pedidos, setPedidos] = useState([])
   const [pedidoSeleccionado, setPedidoSeleccionado] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [filtro, setFiltro] = useState('') // Estado para el buscador
 
   const [mostrarModalFinalizar, setMostrarModalFinalizar] = useState(false)
   const [itemsAProcesar, setItemsAProcesar] = useState([])
@@ -43,7 +44,7 @@ export default function GestionPedidosVenta({ onVolver }) {
         )
       `)
       .in('status', ['pendiente', 'listo'])
-      .order('cliente_nombre', { ascending: true }) // Ordenar por nombre para facilitar sub-agrupación
+      .order('cliente_nombre', { ascending: true })
 
     if (error) return console.error(error)
 
@@ -69,6 +70,24 @@ export default function GestionPedidosVenta({ onVolver }) {
     }
     setLoading(false)
   }
+
+  // Lógica de filtrado inteligente
+  const pedidosFiltrados = pedidos.filter(p => {
+    const busqueda = filtro.toLowerCase()
+    
+    // 1. Buscar por ID de Kommo
+    const matchKommo = p.kommo_id?.toString().toLowerCase().includes(busqueda)
+    
+    // 2. Buscar dentro de los items (Nombres, teléfonos, calzados)
+    const matchItems = p.items.some(item => 
+      item.cliente_nombre?.toLowerCase().includes(busqueda) ||
+      item.cliente_telefono?.toLowerCase().includes(busqueda) ||
+      item.inventario?.productos?.nombre?.toLowerCase().includes(busqueda) ||
+      item.inventario?.productos?.codigo_ref?.toLowerCase().includes(busqueda)
+    )
+
+    return matchKommo || matchItems
+  })
 
   const prepararFinalizacion = (items) => {
     const lista = Array.isArray(items) ? items : [items]
@@ -127,7 +146,6 @@ export default function GestionPedidosVenta({ onVolver }) {
     fetchPedidosActivos()
   }
 
-  // Helper para agrupar items por nombre de cliente dentro del pedido seleccionado
   const agruparPorCliente = (items) => {
     return items.reduce((acc, item) => {
       const nombre = item.cliente_nombre || 'Sin nombre'
@@ -142,14 +160,26 @@ export default function GestionPedidosVenta({ onVolver }) {
       
       {/* PANEL IZQUIERDO */}
       <div className="w-[320px] border-r border-slate-50 flex flex-col bg-slate-50/10">
-        <div className="p-6">
+        <div className="p-6 space-y-4">
           <h1 className="text-xs font-black text-slate-800 tracking-tighter flex items-center gap-2 italic uppercase">
             <RefreshCw size={16} className="text-blue-600" /> Seguimiento Pedidos
           </h1>
+          
+          {/* BUSCADOR INTELIGENTE */}
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={14} />
+            <input 
+              type="text"
+              placeholder="Buscar ID, Cliente, Calzado..."
+              className="w-full bg-white border border-slate-200 rounded-2xl py-3 pl-11 pr-4 text-[11px] font-bold outline-none focus:border-blue-500 focus:ring-4 ring-blue-500/5 transition-all"
+              value={filtro}
+              onChange={(e) => setFiltro(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
-          {pedidos.map(p => (
+          {pedidosFiltrados.map(p => (
             <div 
               key={p.id_grupo} 
               onClick={() => setPedidoSeleccionado(p)} 
@@ -168,14 +198,19 @@ export default function GestionPedidosVenta({ onVolver }) {
               </div>
             </div>
           ))}
+          {pedidosFiltrados.length === 0 && (
+            <div className="text-center py-10 opacity-40">
+              <Package size={30} className="mx-auto mb-2" />
+              <p className="text-[10px] font-black uppercase italic">Sin resultados</p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* PANEL DERECHO (CON SUB-AGRUPACIÓN POR CLIENTE) */}
+      {/* PANEL DERECHO */}
       <div className="flex-1 overflow-y-auto bg-white p-12">
         {pedidoSeleccionado ? (
           <div className="max-w-4xl mx-auto">
-            {/* Header Principal del ID de Kommo */}
             <header className="mb-12 flex justify-between items-start">
               <div>
                 <p className="text-[11px] font-bold text-blue-600 uppercase tracking-widest flex items-center gap-2 mb-2">
@@ -194,11 +229,9 @@ export default function GestionPedidosVenta({ onVolver }) {
               </button>
             </header>
 
-            {/* Sub-agrupación por Cliente (Aquí está la magia) */}
             <div className="space-y-16">
               {Object.entries(agruparPorCliente(pedidoSeleccionado.items)).map(([nombreCliente, itemsCliente]) => (
                 <div key={nombreCliente} className="space-y-6">
-                  {/* Encabezado por Cliente */}
                   <div className="border-l-4 border-blue-600 pl-6 py-1">
                     <span className="bg-blue-600 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase italic">Solicitado para:</span>
                     <h3 className="text-3xl font-black text-slate-800 uppercase italic tracking-tighter mt-1">{nombreCliente}</h3>
@@ -207,7 +240,6 @@ export default function GestionPedidosVenta({ onVolver }) {
                     </p>
                   </div>
 
-                  {/* Lista de Calzados de ESTE cliente */}
                   <div className="grid grid-cols-1 gap-4">
                     {itemsCliente.map(item => (
                       <div key={item.id} className="bg-white p-5 rounded-[2.5rem] border border-slate-100 flex items-center gap-8 hover:shadow-md transition-shadow">
